@@ -5,6 +5,11 @@ contract EmojiParser {
  
 	mapping (uint256 => uint256) emoji;
 
+	// data is stored as [rule, rule, ...]
+	// where rule = [32 byte: slot][4 byte: key] = 36 bytes
+	// where key  = [9 bits: state0][20 bits: codepoint >> 4]
+	// where slot = 16x [3 bits: FE0F, Check Save][4: bits: eat][9 bits: state1]
+	// where slot[i] = codepoint & 0b1111
 	function upload(bytes calldata data) public {
 		uint256 i;
 		uint256 e;
@@ -25,17 +30,17 @@ contract EmojiParser {
 		}
 	}
 
-	function get_debug(uint256 state0, uint256 cp) public view returns (uint256 state1, uint256 eat, bool fe0f, bool save, bool check) {
-		uint256 value = get(state0, cp);
-		state1 = value & 0xFF;
-		eat    = (value & 0x1E00) >> 9;
-		fe0f   = (value & 0x8000) != 0;
-		save   = (value & 0x4000) != 0;
-		check  = (value & 0x2000) != 0;
+	function get(uint256 state0, uint256 cp) public view returns (uint256 value) {
+		value = (emoji[((state0 & 0x1FF) << 20) | (cp >> 4)] >> ((cp & 0xF) << 4)) & 0xFFFF;
 	}
 
-	function get(uint256 state0, uint256 cp) public view returns (uint256 value) {
-		value = (emoji[((state0 & 0xFF) << 20) | (cp >> 4)] >> ((cp & 0xF) << 4)) & 0xFFFF;
+	function get_debug(uint256 state0, uint256 cp) public view returns (uint256 state1, uint256 eat, bool fe0f, bool save, bool check) {
+		uint256 value = get(state0, cp);
+		state1 = value & 0x1FF;
+		eat    = (value & 0x1E00) >> 9;
+		fe0f   = (value & 0x8000) != 0;
+		check  = (value & 0x4000) != 0;
+		save   = (value & 0x2000) != 0;
 	}
 
 	function read(uint24[] memory cps, uint256 pos) public view returns (uint256 len) {
@@ -47,26 +52,26 @@ contract EmojiParser {
 		unchecked { while (pos < cps.length) {
 			uint256 cp = cps[pos++]; 
 			if (cp == 0xFE0F) {
-				if (fe0f == 0) break;
-				fe0f = 0;
+				if (fe0f == 0) break; // we don't allow an FE0F
+				fe0f = 0; // clear flag to prevent more
 				if (eat > 0) {
-					len++;
+					len++; // append immediately to output
 				} else { 
-					extra++;
+					extra++; // combine into next output
 				}
 			} else {
 				state = get(state, cp);
-				if (state == 0) break;
-				eat = (state & 0x1E00) >> 9;
-				len += eat;
-				if (extra > 0 && eat > 0) {
-					len += extra;
+				if (state == 0) break; 
+				eat = (state & 0x1E00) >> 9; // codepoints to output
+				len += eat; // non-zero if valid
+				if (extra > 0 && eat > 0) { 
+					len += extra; // include skipped FE0F
 					extra = 0;
 				}
-				fe0f = state >> 15;
-				if ((state & 0x4000) != 0) {
+				fe0f = state >> 15; // allow FEOF next?
+				if ((state & 0x4000) != 0) { // check
 					if (cp == saved) break;
-				} else if ((state & 0x2000) != 0) {
+				} else if ((state & 0x2000) != 0) { // save
 					saved = cp;
 				}
 			}
@@ -96,6 +101,8 @@ contract EmojiParser {
 			mstore(cps, out) 
 		}
 	}
+
+	// -----------
 
 	function decode(string memory s) public pure returns (uint24[] memory cps) {
 		cps = decodeUTF8(bytes(s));

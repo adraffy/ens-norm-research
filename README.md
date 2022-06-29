@@ -16,3 +16,5 @@ function read(uint24[] memory cps, uint256 pos) view returns (uint256 len) {
 1. Run `compress.js` to build rules
 1. Run `check.js` to validate rules
 1. Run `payload.js` to create compressed payload 
+1. Deploy `EmojiParser.sol`
+1. Call `upload()` with data in `payload-chunks.json`
