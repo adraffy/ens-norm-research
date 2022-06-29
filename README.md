@@ -1,6 +1,6 @@
 # ens-emoji
 
-Compress 3406 emoji sequences (11K codepoints) into 12KB state machine to enable the following API:
+Compress 3406 emoji sequences (11K codepoints, 40KB raw) into 359 storage slots (11KB payload) state machine to enable the following API:
 
 ```solidity
 function read(uint24[] memory cps, uint256 pos) view returns (uint256 len) {
