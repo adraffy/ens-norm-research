@@ -8,8 +8,9 @@ contract EmojiParser {
 	// data is stored as [rule, rule, ...]
 	// where rule = [32 byte: slot][4 byte: key] = 36 bytes
 	// where key  = [9 bits: state0][20 bits: codepoint >> 4]
-	// where slot = 16x [3 bits: FE0F, Check Save][4: bits: eat][9 bits: state1]
-	// where slot[i] = codepoint & 0b1111
+	// where slot = 16x[2 byte:value]
+	// where value = [3 bits: FE0F, Check Save][4: bits: eat][9 bits: state1]
+	// where index = <lower 4 bits> of codepoint
 	function upload(bytes calldata data) public {
 		uint256 i;
 		uint256 e;
@@ -52,7 +53,7 @@ contract EmojiParser {
 		unchecked { while (pos < cps.length) {
 			uint256 cp = cps[pos++]; 
 			if (cp == 0xFE0F) {
-				if (fe0f == 0) break; // we don't allow an FE0F
+				if (fe0f == 0) break; // invalid FEOF
 				fe0f = 0; // clear flag to prevent more
 				if (eat > 0) {
 					len++; // append immediately to output
@@ -60,29 +61,29 @@ contract EmojiParser {
 					extra++; // combine into next output
 				}
 			} else {
-				state = get(state, cp);
-				if (state == 0) break; 
-				eat = (state & 0x1E00) >> 9; // codepoints to output
+				state = get(state & 0x1FF, cp);
+				if (state == 0) break;
+				eat = (state & 0x1E00) >> 9; // codepoints to output (4 bits)
 				len += eat; // non-zero if valid
 				if (extra > 0 && eat > 0) { 
 					len += extra; // include skipped FE0F
-					extra = 0;
+					extra = 0; // reset skipped
 				}
 				fe0f = state >> 15; // allow FEOF next?
-				if ((state & 0x4000) != 0) { // check
+				if ((state & 0x4000) != 0) { // check?
 					if (cp == saved) break;
-				} else if ((state & 0x2000) != 0) { // save
-					saved = cp;
+				} else if ((state & 0x2000) != 0) { // save?
+					saved = cp; // save cp for later
 				}
 			}
 		} }
 	}
 
 	function filter(string memory s) public view returns (uint24[] memory cps) {
-		cps = decodeUTF8(bytes(s));
+		cps = decodeUTF8(s);
 		uint256 pos;
 		uint256 out;
-		while (pos < cps.length) {
+		unchecked { while (pos < cps.length) {
 			uint24 cp = cps[pos];
 			if (cp == 0xFE0F) { // ignored
 				pos++;
@@ -96,7 +97,7 @@ contract EmojiParser {
 				cps[out++] = cp;
 				pos++;
 			}
-		}
+		} }
 		assembly { 
 			mstore(cps, out) 
 		}
@@ -104,44 +105,23 @@ contract EmojiParser {
 
 	// -----------
 
-	function decode(string memory s) public pure returns (uint24[] memory cps) {
-		cps = decodeUTF8(bytes(s));
-	}
-
-	error InvalidUTF8();
-
-	function decodeUTF8(bytes memory v) private pure returns (uint24[] memory cps) {
+	// assume solidity string is valid utf8
+	function decodeUTF8(string memory s) public pure returns (uint24[] memory cps) {
+		bytes memory v = bytes(s);
 		uint256 n = v.length;
 		cps = new uint24[](n);
 		uint256 i;
 		uint256 j;
 		unchecked { while (i < n) {
 			uint256 cp = uint8(v[i++]);
-			if ((cp & 0x80) == 0) { // [1] 0xxxxxxx
+			if (cp < 0x80) { // [1] 0xxxxxxx (7)
 				//
 			} else if ((cp & 0xE0) == 0xC0) { // [2] 110xxxxx (5)
-				if (i >= n) revert InvalidUTF8();
-				uint256 a = uint8(v[i++]);
-				if ((a & 0xC0) != 0x80) revert InvalidUTF8();
-				cp = ((cp & 0x1F) << 6) | a;
-				if (cp < 0x80) revert InvalidUTF8();
+				cp = ((cp & 0x1F) << 6) | (uint8(v[i++]) & 0x3F);
 			} else if ((cp & 0xF0) == 0xE0) { // [3] 1110xxxx (4)
-				if (i + 2 > n) revert InvalidUTF8();
-				uint256 a = uint8(v[i++]);
-				uint256 b = uint8(v[i++]);
-				if (((a | b) & 0xC0) != 0x80) revert InvalidUTF8();
-				cp = ((cp & 0xF) << 12) | ((a & 0x3F) << 6) | (b & 0x3F);
-				if (cp < 0x0800) revert InvalidUTF8();
-			} else if ((cp & 0xF8) == 0xF0) { // [4] 11110xxx (3)
-				if (i + 3 > n) revert InvalidUTF8();
-				uint256 a = uint8(v[i++]);
-				uint256 b = uint8(v[i++]);
-				uint256 c = uint8(v[i++]);
-				if (((a | b | c) & 0xC0) != 0x80) revert InvalidUTF8();
-				cp = ((cp & 0x7) << 18) | ((a & 0x3F) << 12) | ((b & 0x3F) << 6) | (c & 0x3F);
-				if (cp < 0x10000 || cp > 0x10FFFF) revert InvalidUTF8();
-			} else {
-				revert InvalidUTF8();
+				cp = ((cp & 0x0F) << 12) | ((uint8(v[i++]) & 0x3F) << 6) | (uint8(v[i++]) & 0x3F);
+			} else { // [4] 11110xxx (3)
+				cp = ((cp & 0x07) << 18) | ((uint8(v[i++]) & 0x3F) << 12) | ((uint8(v[i++]) & 0x3F) << 6) | (uint8(v[i++]) & 0x3F);
 			}
 			cps[j++] = uint24(cp);
 		} }
