@@ -8,7 +8,7 @@ let {
 	style, 
 	whitelist_seq, 
 	whitelist_zwj
-} = JSON.parse(await readFile(new URL('./ens-normalize-hr.json', import.meta.url)));
+} = JSON.parse(await readFile(new URL('../data/ens-normalize-hr.json', import.meta.url)));
 
 let sequences = [
 	keycaps.map(x => [x, 0xFE0F, 0x20E3]),
