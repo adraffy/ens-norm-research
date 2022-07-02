@@ -3,37 +3,19 @@ pragma solidity ^0.8.15;
 
 import {Ownable} from "@openzeppelin/contracts@4.6.0/access/Ownable.sol";
 
-contract Normalize is Ownable {
+error InvalidCodepoint(uint256 cp);
 
-	// where key   = [9 bits: state0][20 bits: codepoint >> 4]
-	// where value = 16x[2 byte: state]
-	// where index = <lower 4 bits> of codepoint
-	// where state = [3 bits: FE0F, Check Save][4: bits: eat][9 bits: state1]
+contract Normalize2 is Ownable {
+
 	mapping (uint256 => uint256) _emoji;
-
-	// where key   = [codepoint >> 8]
-	// where value = 256x[1 bit: valid]
-	// where index = <lower 8 bits> of codepoint
 	mapping (uint256 => uint256) _valid;
+	mapping (uint256 => uint256) _small; // 1-2 cp
+	mapping (uint256 => uint256) _large; // 3-6 cp
 
-	// mapping for cp => 1-2 cp
-	// where key   = [codepoint >> 2]
-	// where value = 4x[8 byte: 2x[3 byte: cp]]
-	// where index = <lower 2 bits> of cp
-	mapping (uint256 => uint256) _small; 
-
-	// mapping for cp => 3-6 cp
-	// where key   = [codepoint >> 1]
-	// where value = 2x[16 byte: [2 bits: len] ... cps]
-	// where index = <lower 1 bit> of cp
-	// where len = 3 + [0-3] => 3-6 
-	// where cps = len x [21 bits: cp], stored in reverse	
-	mapping (uint256 => uint256) _large;
-
-    function updateMapping(mapping (uint256 => uint256) storage map, bytes calldata data, uint256 keyBytes) private {
-        uint256 i;
+	function updateMapping(mapping (uint256 => uint256) storage map, bytes calldata data, uint256 key_bytes) private {
+		uint256 i;
 		uint256 e;
-        uint256 keyMask = (1 << (keyBytes << 3)) - 1;
+		uint256 mask = (1 << (key_bytes << 3)) - 1;
 		assembly {
 			i := data.offset
 			e := add(i, data.length)
@@ -42,15 +24,16 @@ contract Normalize is Ownable {
 			uint256 k;
 			uint256 v;
 			assembly {
+				// key-value pairs are packed in reverse 
+				// eg. [value1][key1][value2][key2]...
 				v := calldataload(i)
-				i := add(i, keyBytes)
-				k := and(calldataload(i), keyMask)
+				i := add(i, key_bytes)
+				k := and(calldataload(i), mask)
 				i := add(i, 32)
 			}
 			map[k] = v;
 		}
-    }
-
+	}
 
 	function uploadEmoji(bytes calldata data) public onlyOwner {
 		updateMapping(_emoji, data, 4);
@@ -65,43 +48,294 @@ contract Normalize is Ownable {
 		updateMapping(_large, data, 3);
 	}
 
-
-	function readEmoji(uint24[] memory cps, uint256 pos) public view returns (uint256 len) {
-		uint256 state;
-		uint256 eat;
-		uint256 fe0f;
-		uint256 extra;
-		uint256 saved;
-		unchecked { while (pos < cps.length) {
-			uint256 cp = cps[pos++]; 
-			if (cp == 0xFE0F) {
-				if (fe0f == 0) break; // invalid FEOF
-				fe0f = 0; // clear flag to prevent more
-				if (eat > 0) {
-					len++; // append immediately to output
-				} else { 
-					extra++; // combine into next output
-				}
-			} else {
-				state = (_emoji[((state & 0xFF) << 20) | (cp >> 4)] >> ((cp & 0xF) << 4)) & 0xFFFF;
-				if (state == 0) break;
-				eat = (state & 0x1E00) >> 9; // codepoints to output (4 bits)
-				len += eat; // non-zero if valid
-				if (extra > 0 && eat > 0) { 
-					len += extra; // include skipped FE0F
-					extra = 0; // reset skipped
-				}
-				fe0f = state >> 15; // allow FEOF next?
-				if ((state & 0x4000) != 0) { // check?
-					if (cp == saved) break;
-				} else if ((state & 0x2000) != 0) { // save?
-					saved = cp; // save cp for later
-				}
-			}
-		} }
+	function isValid(uint256 cp) private view returns (bool) {
+		// Floor[cp/256] => array: bit[256]
+		// array[cp%256] => bit: valid
+		return ((_valid[cp >> 8] & (1 << (cp & 0xFF))) != 0);
 	}
 
-	function isIgnored(uint256 cp) public pure returns (bool) {
+	function getSmall(uint256 cp) private view returns (uint256) {
+		// Floor[cp/4] => array: uint32[4]
+		// array[cp%4] => [unused: (16 bits), cps1: (24 bits), cps0: (24 bits)]
+		// eg. "B"  => [0, B]
+		// eg. "XY" => [X, Y]  
+		return (_small[cp >> 2] >> ((cp & 0x3) << 6)) & 0xFFFFFFFFFFFFFFFF;
+	}
+
+	function getLarge(uint256 cp) private view returns (uint256) {
+		// Floor[cp/2] => array: uint128[2] 
+		// array[cp%2] => [extra_len: (2 bits), cps: 6x(21 bits)]
+		// where len = 3 + extra_len
+		// where cps = codepoints stored backwards
+		// eg. "ABCD" => [0b01, [0, 0, D, C, B, A]] , 3 + 1 = 4 
+		return (_large[cp >> 1] >> ((cp & 0x1) << 7)) & 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
+	}
+	
+	function debugEmoji(uint256 s0, uint256 cp) public view returns (uint256 value, bool fe0f, bool check, bool save, bool valid, uint256 s1) {
+		// (state0, Floor[cp/16]) => array: uint32[16]
+		// array[cp%16] => [flags: (4 bits), state1: (12 bits)]
+		value = (_emoji[((s0 & 0xFFF) << 20) | (cp >> 4)] >> ((cp & 0xF) << 4)) & 0xFFFF;
+		fe0f  = (value & 0x8000) != 0; // can an FE0F follow
+		check = (value & 0x4000) != 0; // should we compare to saved cp
+		save  = (value & 0x2000) != 0; // should we save cp
+		valid = (value & 0x1000) != 0; // is the sequence valid so far
+		s1 = value & 0xFFF; // next state
+	}
+
+	function debugMapping(uint256 cp) public view returns (uint24[] memory cps) {
+		if (isValid(cp)) {
+			cps = new uint24[](1);
+			cps[0] = uint24(cp);
+		} else if (isIgnored(cp)) {
+			// ignored
+		} else {
+			uint256 mapped = getMapped(cp);
+			if (mapped != 0) {
+				cps = new uint24[](1);
+				cps[0] = uint24(cp);
+			} else {
+				mapped = getSmall(cp);
+				if (mapped != 0) {
+					if (mapped < 0xFFFFFF) {
+						cps = new uint24[](1);
+						cps[0] = uint24(mapped);
+					} else {
+						cps = new uint24[](2);
+						cps[0] = uint24(mapped >> 24);
+						cps[1] = uint24(mapped);
+					}
+				} else {
+					mapped = getLarge(cp);
+					if (mapped != 0) {
+						uint256 len = 3 + (mapped >> 126);
+						cps = new uint24[](len);
+						for (uint256 i; i < len; i++) {
+							cps[i] = uint24(mapped & 0x1FFFFF);
+							mapped >>= 21;
+						}
+					} else {
+						revert InvalidCodepoint(cp);
+					}
+				}
+			}
+		}
+	}
+
+	// read one cp from memory at ptr
+	// step is number of encoded bytes (1-4)
+	// raw is encoded bytes
+	// warning: assumes valid UTF8
+	function readUTF8(uint256 ptr) private pure returns (uint256 cp, uint256 step, uint256 raw) {
+		// 0xxxxxxx => 1 :: 0aaaaaaa ???????? ???????? ???????? => 00aaaaaa
+		// 110xxxxx => 2 :: 110aaaaa 10bbbbbb ???????? ???????? => 00000aaa aabbbbbb
+		// 1110xxxx => 3 :: 1110aaaa 10bbbbbb 10cccccc ???????? => 000000aa aaaabbbb bbcccccc
+		// 11110xxx => 4 :: 11110aaa 10bbbbbb 10cccccc 10dddddd => 000aaabb bbbbcccc ccdddddd
+		assembly {
+			raw := and(mload(add(ptr, 4)), 0xFFFFFFFF)
+		}
+		uint256 upper = raw >> 28;
+		if (upper < 0x8) {
+			step = 1;
+			raw >>= 24;
+			cp = raw;
+		} else if (upper < 0xE) {
+			step = 2;
+			raw >>= 16;
+			cp = ((raw & 0x1F00) >> 2) | (raw & 0x3F);
+		} else if (upper < 0xF) {
+			step = 3;
+			raw >>= 8;
+			cp = ((raw & 0x0F0000) >> 4) | ((raw & 0x3F00) >> 2) | (raw & 0x3F);
+		} else {
+			step = 4;
+			cp = ((raw & 0x07000000) >> 6) | ((raw & 0x3F0000) >> 4) | ((raw & 0x3F00) >> 2) | (raw & 0x3F);
+		}
+	}
+
+	// write len lower-bytes of buf at ptr
+	// return ptr advanced by len
+	function appendBytes(uint256 ptr, uint256 buf, uint256 len) private pure returns (uint256 ptr1) {
+		assembly {
+			ptr1 := add(ptr, len) // advance by len bytes
+			let word := mload(ptr1) // load right-aligned word
+			let mask := sub(shl(shl(3, len), 1), 1) // compute len-byte mask: 1 << (len << 3) - 1
+			mstore(ptr1, or(and(word, not(mask)), and(buf, mask))) // merge and store
+		}
+	}
+
+	// encode cp as utf8 into buf at len, shifting old input left
+	// returns new buf and len
+	// warning: buf is only 32 bytes
+	function appendUTF8(uint256 buf0, uint256 len0, uint256 cp) private pure returns (uint256 buf, uint256 len) {
+		if (cp < 0x80) {
+			buf = (buf0 << 8) | cp;
+			len = len0 + 1;
+		} else if (cp < 0x800) {
+			buf = (buf0 << 16) | (0xC080 | (((cp << 2) & 0x1F00) | (cp & 0x003F)));
+			len = len0 + 2;
+		} else if (cp < 0x10000) {
+			buf = (buf0 << 24) | (0xE08080 | (((cp << 4) & 0x0F0000) | ((cp << 2) & 0x003F00) | (cp & 0x00003F)));
+			len = len0 + 3;
+		} else {
+			buf = (buf0 << 32) | (0xF0808080 | (((cp << 6) & 0x07000000) | ((cp << 4) & 0x003F0000) | ((cp << 2) & 0x00003F00) | (cp & 0x0000003F)));
+			len = len0 + 4;
+		}
+	}
+
+	// restore FE0F in emoji sequences at proper locations
+	function beautify(string memory name) public view returns (string memory nice) {
+		bytes memory buf = new bytes(bytes(name).length * 3); // FE0F as UTF is 3 bytes
+		uint256 src;
+		uint256 end;
+		uint256 dst;
+		assembly {
+			src := name
+			end := add(name, mload(name))
+			dst := buf
+		}
+		while (src < end) {
+			(uint256 src1, uint256 dst1) = processEmoji(src, end, dst, true);
+			if (dst != dst1) {
+				src = src1;
+				dst = dst1;
+			} else {
+				(, uint256 step, uint256 raw) = readUTF8(src);
+				dst = appendBytes(dst, raw, step);
+				src += step;
+			}
+		}
+		assembly {
+			mstore(buf, sub(dst, buf))
+		}
+		nice = string(buf);
+	}
+
+	function normalize(string memory name) public returns (string memory norm) {
+		bytes memory buf = new bytes(bytes(name).length * 6); // largest expansion factor is 6x
+		uint256 src;
+		uint256 end;
+		uint256 dst;
+		assembly {
+			src := name
+			end := add(name, mload(name))
+			dst := buf
+		}
+		while (src < end) {
+			(uint256 src1, uint256 dst1) = processEmoji(src, end, dst, false);
+			if (dst != dst1) { // valid emoji
+				src = src1;
+				dst = dst1; 
+				continue;
+			}
+			(uint256 cp, uint256 step, uint256 raw) = readUTF8(src);
+			if (isValid(cp)) {
+				src += step;
+				dst = appendBytes(dst, raw, step);
+				continue;
+			}
+			if (isIgnored(cp)) {
+				src += step;
+				continue;
+			}
+			uint256 mapped = getMapped(cp);
+			if (mapped != 0) {
+				src += step;                
+				(raw, step) = appendUTF8(0, 0, mapped);
+				dst = appendBytes(dst, raw, step);
+				continue;
+			}
+			mapped = getSmall(cp);
+			if (mapped != 0) {
+				src += step;
+				(raw, step) = appendUTF8(0, 0, mapped & 0xFFFFFF);
+				if (mapped > 0xFFFFFF) {
+					(raw, step) = appendUTF8(raw, step, mapped);
+				}
+				dst = appendBytes(dst, raw, step);
+				continue;
+			}
+			mapped = getLarge(cp);
+			if (mapped == 0) revert InvalidCodepoint(cp);
+			src += step;
+			uint256 len = 2 + (mapped >> 126);
+			(raw, step) = appendUTF8(0, 0, mapped & 0x1FFFFF);
+			while (--len > 0) {
+				mapped >>= 21;
+				(raw, step) = appendUTF8(raw, step, mapped & 0x1FFFFF);
+			}
+		}
+		assembly {
+			mstore(buf, sub(dst, buf))
+		}
+		norm = string(buf);
+	}
+
+	function processEmoji(uint256 pos, uint256 end, uint256 dst0, bool include_fe0f) private view returns (uint256 valid_pos, uint256 dst) {
+		unchecked {
+			uint256 state;
+			uint256 fe0f;
+			uint256 saved;
+			uint256 buf; // the largest emoji is 35 bytes, which exceeds 32-byte buf
+			uint256 len; // but the largest non-valid emoji sequence is only 27-bytes
+			dst = dst0;
+			while (pos < end) {
+				(uint256 cp, uint256 step, uint256 raw) = readUTF8(pos);
+				if (cp == 0xFE0F) {
+					if (fe0f == 0) break; // invalid FEOF
+					fe0f = 0; // clear flag to prevent more
+					pos += step; // skip over FE0F
+					if (len == 0) { // last was valid so
+						valid_pos = pos; // consume FE0F as well
+					}
+				} else {
+					state = (_emoji[((state & 0xFFF) << 20) | (cp >> 4)] >> ((cp & 0xF) << 4)) & 0xFFFF;
+					if (state == 0) break;
+					pos += step; 
+					len += step; 
+					buf = (buf << (step << 3)) | raw; // use raw instead of converting cp back to UTF8
+					fe0f = state & 0x8000; // allow FEOF next?
+					if (include_fe0f && fe0f != 0) { // forcibily insert a FE0F
+						// (buf, len) = appendUTF8(buf, len, 0xFE0F);
+						buf = (buf << 24) | 0xEFB88F; // UTF8-encoded
+						len += 3;
+					}
+					if ((state & 0x1000) != 0) { // valid
+						dst = appendBytes(dst, buf, len);
+						buf = 0;
+						len = 0;
+						valid_pos = pos; // everything output so far is valid
+					} 
+					if ((state & 0x4000) != 0) { // check?
+						if (cp == saved) break;
+					} else if ((state & 0x2000) != 0) { // save?
+						saved = cp; // save cp for later
+					}
+				}
+			}
+		}
+	}
+
+	function debugDecode(string memory s) public pure returns (uint24[] memory cps) {   
+		uint256 src;
+		uint256 end;
+		assembly {
+			src := s
+			end := add(s, mload(s))
+		}
+		uint256 len;
+		cps = new uint24[](bytes(s).length);
+		while (src < end) {
+			(uint256 cp, uint256 step, ) = readUTF8(src);
+			cps[len++] = uint24(cp);
+			src += step;
+		}
+		assembly {
+			mstore(cps, len)
+		}
+	}
+
+	// auto-generated
+	function isIgnored(uint256 cp) private pure returns (bool) {
 		if (cp < 0x2064) {
 			return cp == 0xAD || cp == 0x200B || cp == 0x2060 || cp == 0x2064;
 		} else if (cp < 0x1BCA0) {
@@ -111,175 +345,8 @@ contract Normalize is Ownable {
 		}
 	}
 
-
-	error InvalidCodepoint(uint24 cp);
-	
-	//event Debug3(uint256 a, uint256 b, uint256 c);
-
-	function normalize(string memory name) public view returns (string memory norm) {
-		norm = encodeUTF8(normalizeRaw(name));
-	}
-
-	function normalizeRaw(string memory name) public view returns (uint24[] memory cps) {
-		(uint24[] memory cps0, uint256 n) = decodeUTF8(name); // double capacity
-		cps = new uint24[](bytes(name).length << 1); // guess
-		uint256 pos;
-		uint256 out;
-		unchecked { while (pos < n) {
-			uint256 temp = readEmoji(cps0, pos);
-			if (temp > 0) { // emoji
-				uint256 end = pos + temp;
-				while (pos < end) {
-					uint24 cp = cps0[pos++];
-					if (cp != 0xFE0F) {
-						cps[out++] = cp;
-					}
-				}
-			} else {
-				uint24 cp = cps0[pos++];
-				if ((_valid[cp >> 8] & (1 << (cp & 0xFF))) != 0) {
-					cps[out++] = cp;
-				} else if (isIgnored(cp)) { 
-					// ignored
-				} else {
-					temp = getMapped(cp);
-					if (temp != 0) {
-						cps[out++] = uint24(temp);
-					} else {
-						temp = (_small[cp >> 2] >> ((cp & 0x3) << 6)) & 0xFFFFFFFFFFFFFFFF;
-						if (temp != 0) {
-							if (temp < 0xFFFFFF) {
-								cps[out++] = uint24(temp);
-							} else {
-								cps[out++] = uint24(temp >> 24);
-								cps[out++] = uint24(temp);
-							}
-						} else {
-							temp = (_large[cp >> 1] >> ((cp & 0x1) << 7)) & 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
-							if (temp != 0) {
-								uint256 end = out + 3 + (temp >> 126);
-								if (end > cps.length) {
-									uint24[] memory copy = new uint24[](end << 1);
-									for (uint256 i; i < out; i++) {
-										copy[i] = cps[i];
-									}
-									cps = copy;									
-									/*
-									uint256 slots = (out * 3 + 0x1F) >> 5; 
-									//revert Overflow(cps.length, end, slots);
-									uint256 src;
-									assembly { src := cps } 
-									cps = new uint24[](end << 1);
-									uint256 dst;
-									assembly { dst := cps }
-									while (slots-- > 0) {
-										assembly {
-											src := add(src, 32)
-											dst := add(dst, 32)
-											mstore(dst, mload(src))
-										}
-									}
-									*/
-								}
-								while (out < end) {
-									cps[out++] = uint24(temp & 0x1FFFFF); 
-									temp >>= 21;
-								}
-							} else {
-								revert InvalidCodepoint(cp);
-							}
-						}
-					}
-				}
-			}
-		} }
-		assembly { 
-			mstore(cps, out) 
-		}
-	}
-
-	function debugValid(uint256 cp) public view returns (bool) {
-		return ((_valid[cp >> 8] & (1 << (cp & 0xFF))) != 0);
-	}
-
-	function debugSmall(uint256 cp) public view returns (uint256 value) {		
-		value = (_small[cp >> 2] >> ((cp & 0x3) << 6)) & 0xFFFFFFFFFFFFFFFF;
-	}
-
-	function debugLarge(uint256 cp) public view returns (uint256 len, uint256 value) {		
-		value = (_large[cp >> 1] >> ((cp & 0x1) << 7)) & 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
-		len = 3 + (value >> 126);
-		value &= 0x3FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
-	}
-
-	function debugDecode(string memory s) public pure returns (uint24[] memory cps) {
-		uint256 len;
-		(cps, len) = decodeUTF8(s);
-		assembly {
-			mstore(cps, len)
-		}
-	}
-
-	// warning: unsafe if not utf8
-	function decodeUTF8(string memory s) public pure returns (uint24[] memory cps, uint24 out) {
-		bytes memory v = bytes(s);
-		cps = new uint24[](v.length);
-		uint256 i;
-		unchecked { while (i < v.length) {
-			uint256 cp = uint8(v[i++]);
-			if (cp < 0x80) { // [1] 0xxxxxxx (7)
-				//
-			} else if ((cp & 0xE0) == 0xC0) { // [2] 110xxxxx (5)
-				cp = ((cp & 0x1F) << 6) | (uint8(v[i++]) & 0x3F);
-			} else if ((cp & 0xF0) == 0xE0) { // [3] 1110xxxx (4)
-				uint256 a = uint8(v[i++]);
-				uint256 b = uint8(v[i++]);
-				cp = ((cp & 0x0F) << 12) | ((a & 0x3F) << 6) | (b & 0x3F);
-			} else { // [4] 11110xxx (3)
-				uint256 a = uint8(v[i++]);
-				uint256 b = uint8(v[i++]);
-				uint256 c = uint8(v[i++]);
-				cp = ((cp & 0x07) << 18) | ((a & 0x3F) << 12) | ((b & 0x3F) << 6) | (c & 0x3F);
-			}
-			cps[out++] = uint24(cp);
-		} }
-	}
-
-	function encodeUTF8(uint24[] memory cps) public pure returns (string memory s) {
-		bytes memory v = new bytes(cps.length << 2); // guarenteed safe
-		uint256 pos;
-		uint256 ptr;
-		uint256 buf;
-		assembly {
-			ptr := v
-		}
-		while (pos < cps.length) {
-			uint256 cp = cps[pos++];
-			if (cp < 0x80) {
-				buf = (buf << 8) | cp;
-				ptr++; 
-			} else if (cp < 0x800) {
-				buf = (buf << 16) | (0xC080 | (((cp << 2) & 0x1F00) | (cp & 0x003F)));
-				ptr += 2;
-			} else if (cp < 0x10000) {
-				buf = (buf << 24) | (0xE08080 | (((cp << 4) & 0x0F0000) | ((cp << 2) & 0x003F00) | (cp & 0x00003F)));
-				ptr += 3;
-			} else {
-				buf = (buf << 32) | (0xF0808080 | (((cp << 6) & 0x07000000) | ((cp << 4) & 0x003F0000) | ((cp << 2) & 0x00003F00) | (cp & 0x0000003F)));
-				ptr += 4;
-			}
-			assembly {
-				mstore(ptr, buf)
-			}
-		}
-		assembly { 
-			mstore(v, sub(ptr, v)) // truncate
-		} 
-		s = string(v);
-	}
-
-
-	function getMapped(uint256 cp) public pure returns (uint256 ret) {
+	// auto-generated
+	function getMapped(uint256 cp) private pure returns (uint256 ret) {
 		if (cp <= 0x556) {
 			if (cp >= 0x41 && cp <= 0x5A) { // Mapped11: 26
 				ret = cp + 0x20;
@@ -736,5 +803,4 @@ contract Normalize is Ownable {
 			}
 		}
 	}
-
 }

@@ -20,6 +20,9 @@ function read(uint24[] memory cps, uint256 pos) view returns (uint256 len) {
 1. Call `upload()` with data in `payload-chunks.json`
 
 
-## /idna2003-no-nfc/
+## /idna2003-no-nfc-v2/
 
 Compress modified IDNA 2003 table (150K codepoints) with combining marks and composed characters disallowed.
+
+1. Deploy `Normalize2.sol`
+2. Call `uploadXXX()` with the appropriate payloads
