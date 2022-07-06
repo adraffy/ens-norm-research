@@ -210,7 +210,7 @@ contract Normalize2 is Ownable {
 		nice = string(buf);
 	}
 
-	function normalize(string memory name) public returns (string memory norm) {
+	function normalize(string memory name) public view returns (string memory norm) {
 		bytes memory buf = new bytes(bytes(name).length * 6); // largest expansion factor is 6x
 		uint256 src;
 		uint256 end;

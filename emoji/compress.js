@@ -1,22 +1,7 @@
 import {readFile, writeFile} from 'node:fs/promises';
 //import {inspect} from 'node:util';
 
-let {
-	keycaps, 
-	modifier_base,
-	modifier,
-	style, 
-	whitelist_seq, 
-	whitelist_zwj
-} = JSON.parse(await readFile(new URL('../data/ens-normalize-hr.json', import.meta.url)));
-
-let sequences = [
-	keycaps.map(x => [x, 0xFE0F, 0x20E3]),
-	style.map(x => [x, 0xFE0F]),
-	modifier_base.flatMap(x => modifier.map(y => [x, y])),
-	whitelist_seq,
-	whitelist_zwj
-].flat();
+let sequences = JSON.parse(await readFile(new URL('../data/emoji.json', import.meta.url)));
 
 class Node {
 	constructor() {
@@ -90,14 +75,13 @@ for (let cps of sequences) {
 	node.end = true;
 }
 
-
 // there are sequences of the form:
 // a__ MOD b__ MOD2 c__ 
 // where MOD != MOD2 (5x4 = 20 combinations)
 // if we remember the first mod, 
 // we can pretend the second mod is non-exclusionary (5x5)
 // which allows further compression
-let modifier_set = new Set(modifier.map(x => x.toString()));
+let modifier_set = new Set([127995,127996,127997,127998,127999].map(x => x.toString()));
 root.scan((node, path) => {
 	// look nodes that are missing 1 modifier
 	let v = Object.keys(node.branches);
@@ -128,7 +112,6 @@ let rules = [];
 let state = 0;
 root.collect_rules(rules, 0, state, () => ++state);
 
-await writeFile(new URL('./seqs.json', import.meta.url), JSON.stringify(sequences));
 await writeFile(new URL('./tree.json', import.meta.url), JSON.stringify(root));
 await writeFile(new URL('./rules.json', import.meta.url), JSON.stringify(rules));
 

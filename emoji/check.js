@@ -4,7 +4,7 @@ function rand(n) {
 	return (Math.random() * n)|0;
 }
 
-let seqs = JSON.parse(await readFile(new URL('./seqs.json', import.meta.url)));
+let seqs = JSON.parse(await readFile(new URL('../data/emoji.json', import.meta.url)));
 let rules = JSON.parse(await readFile(new URL('./rules.json', import.meta.url)));
 
 let rules_map = Object.fromEntries(rules.map(x => [(x.state0 << 24) | x.cp, x]));
