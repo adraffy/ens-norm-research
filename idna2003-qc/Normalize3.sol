@@ -296,7 +296,7 @@ contract Normalize3 is Ownable {
 			mapped = getLarge(cp);
 			if (mapped == 0) revert InvalidCodepoint(cp);
 			src += step;
-			uint256 len = 2 + (mapped >> 126);
+			uint256 len = 3 + (mapped >> 126);
 			cp = mapped & 0x1FFFFF;
 			class = _quickCheck(class, cp);
 			(raw, step) = appendUTF8(0, 0, cp);
@@ -306,6 +306,7 @@ contract Normalize3 is Ownable {
 				class = _quickCheck(class, cp);
 				(raw, step) = appendUTF8(raw, step, cp);
 			}
+			dst = appendBytes(dst, raw, step);
 		}
 		assembly {
 			mstore(buf, sub(dst, buf))
