@@ -6,9 +6,7 @@ On-chain normalization following [@adraffy/ensip-norm/](https://github.com/adraf
 
 Currently fails incorrectly when [`NFC_QC`](https://unicode.org/reports/tr15/#Detecting_Normalization_Forms) is No/Maybe.
 
-
-Rinkeby Contract: [0x1a29f1e459ccd6667590218f04175fe394324d9d](https://rinkeby.etherscan.io/address/0x1a29f1e459ccd6667590218f04175fe394324d9d#readContract)
-
+Rinkeby Contract: [0x335be342669ae015d7a87eb7c632447f9218254b](https://rinkeby.etherscan.io/address/0x335be342669ae015d7a87eb7c632447f9218254b#readContract)
 
 
 1. Deploy `Normalize3.sol`
