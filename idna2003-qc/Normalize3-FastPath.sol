@@ -14,6 +14,7 @@ contract Normalize3 is Ownable {
 	mapping (uint256 => uint256) _small; // 1-2 cp
 	mapping (uint256 => uint256) _large; // 3-6 cp
 	mapping (uint256 => uint256) _class; // qc = N => 255
+	uint256 public _lower; // bitmap [0-255]
 
 	function debugDestroy() onlyOwner public {
 		selfdestruct(payable(msg.sender));
@@ -59,6 +60,16 @@ contract Normalize3 is Ownable {
 	}
 	function updateClass(bytes calldata data) public onlyOwner {
 		updateMapping(_class, data, 2);
+	}
+	function updateLower() public onlyOwner {
+		uint256 valid = _valid[0];
+		for (uint256 i; i < 256; i++) {
+			uint256 mask = 1 << i;
+			if ((valid & mask) != 0 && getEmoji(0, i) != 0) {
+				valid ^= mask;
+			}
+		}
+		_lower = valid;
 	}
 
 	function isValid(uint256 cp) private view returns (bool) {
@@ -118,6 +129,7 @@ contract Normalize3 is Ownable {
 			mstore(cps, len)
 		}
 	}
+
 
 	function debugEmoji(uint256 s0, uint256 cp) public view returns (uint256 value, bool fe0f, bool check, bool save, bool valid, uint256 s1) {
 		// (state0, Floor[cp/16]) => array: uint32[16]
@@ -268,12 +280,20 @@ contract Normalize3 is Ownable {
 		uint256 end;
 		uint256 dst;
 		uint256 class;
+		uint256 lower = _lower;
 		assembly {
 			src := name
 			end := add(name, mload(name))
 			dst := buf
 		}
 		while (src < end) {
+			(uint256 cp, uint256 step, uint256 raw) = readUTF8(src);
+			if (cp < 256 && lower & (1 << cp) != 0) {
+				src += step;
+				class = 0;
+				dst = appendBytes(dst, raw, step); 
+				continue;
+			}
 			(uint256 src1, uint256 dst1) = processEmoji(src, end, dst, false);
 			if (dst != dst1) { // valid emoji
 				src = src1;
@@ -281,7 +301,6 @@ contract Normalize3 is Ownable {
 				class = 0; // reset
 				continue;
 			}
-			(uint256 cp, uint256 step, uint256 raw) = readUTF8(src);
 			uint256 mapped = getMapped(cp); // cheap
 			if (mapped != 0) {
 				src += step;
