@@ -1,0 +1,12 @@
+https://rinkeby.etherscan.io/tx/0x7c76cd051a302e8dc49cb815257a7e03fffa0c711ecc507c61167233a19a4c19  3,998,205 contract
+https://rinkeby.etherscan.io/tx/0xa8c57d6c5feed6af3e1b62c3e94eec73c154aab6382f9f6012c36ead9fff0d37  4,514,243 large
+https://rinkeby.etherscan.io/tx/0xbb34fd8c51993cddaf2d896136dcb3fec95857a13db0c3aafc600962fe24e8db 10,550,511 recomp
+https://rinkeby.etherscan.io/tx/0xbabc5dfe7f945193ce40ca8f08ec1ed397fd824059f46266e75b2ccddff4ee98 21,116,791 small
+https://rinkeby.etherscan.io/tx/0x17d85928717666fa7602b2d7de381bcb23c60817ae2429a9f99ded3d76ff3803  2,969,454 valid
+https://rinkeby.etherscan.io/tx/0x3b43a125118073406ccfb87afcee78c63b832890e2eedce679698de67e98f718  8,099,124 emoji
+https://rinkeby.etherscan.io/tx/0x5d37478ef42ba3796c0e40d20699cee91126643a6ea43afa91fe02d34440023e  1,531,073 cm
+https://rinkeby.etherscan.io/tx/0x55395cf8544e0ab564bfc22353a4e53e025d4b165694050de6ac1fa292b5aacd 14,231,622 decomp
+https://rinkeby.etherscan.io/tx/0x64f7247e259cabd9d764fe61f4ce6309f482f4e6e9972b9f86b74af30e3cb93b  3,419,671 class
+https://rinkeby.etherscan.io/tx/0xd67a0c56a338c7e3df13db8c87ad29a5376b9b9dba159912945f190f1d69ef59    181,466 ignored
+
+https://rinkeby.etherscan.io/tx/0x63086045ed1be7ab6d2005a6b23a2c4c72c12d7820d149d4ea7104f46a5477df    673,883 large edit
