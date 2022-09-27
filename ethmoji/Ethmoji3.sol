@@ -40,7 +40,18 @@ contract Ethmoji is Ownable {
 		return (_emoji[(s0 << 20) | (cp >> 4)] >> ((cp & 0xF) << 4)) & 0xFFFF;
 	}
 
-	function test(string memory name) public view returns (string memory display, uint256 label_hash, bytes memory parsed) {
+	// [pass]
+	// 💩💩💩.eth 
+	// 🇺🇸🇺🇸.eth 
+	// 🇺🇸🇦🇴.eth
+	// 👨‍👩‍👦.eth
+	// 🧟‍♂.eth
+	// [fail]
+	// 💩💩💩💩.eth 
+	// 🇦🇦🇦.eth
+	// 👨‍👩‍👦👨‍👩‍👦.eth
+
+	function test(string memory name) public view returns (string memory display, uint256 label_hash, bytes memory parsed, bytes32 node) {
 		uint256 len = bytes(name).length;
 		require(len >= 7, "too short"); // 3 + ".eth"
 		uint256 suffix;
@@ -66,14 +77,15 @@ contract Ethmoji is Ownable {
 				mstore(temp, n)
 			}
 		} else if (parsed.length == 8) { // double
-			require(uint8(parsed[0]) == 1 && uint8(parsed[1]) == 2, "not double 0");
-			require(uint8(parsed[4]) == 1 && uint8(parsed[5]) == 2, "not double 1");
+			require(uint8(parsed[0]) == 0 && uint8(parsed[1]) == 2, "not double 0");
+			require(uint8(parsed[4]) == 0 && uint8(parsed[5]) == 2, "not double 1");
 			// temp is [flag][flag]
 		}
 		display = string(temp);
 		assembly {
 			label_hash := keccak256(add(name, 32), sub(len, 4)) // compute label hash
 		}
+		node = keccak256(abi.encodePacked(uint256(0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae), label_hash));
 	}
 
 	function beautify(bytes memory name) private view returns (bytes memory beauty, bytes memory parsed) {
@@ -101,14 +113,14 @@ contract Ethmoji is Ownable {
 				uint256 src_step = src_next - src_prev;
 				uint256 hash;
 				assembly {
-					hash := keccak256(src_prev, src_step)
+					hash := keccak256(add(src_prev, 32), src_step)
 				}
 				if (hash == hash_prev && repeated < 255) {
 					repeated++;
 				} else {
-					if (parsed_end != 0) {
+					if (repeated != 0) {
 						parsed[parsed_end-4] = bytes1(uint8(repeated));
-						repeated = 0;
+						repeated = 0;						
 					}
 					hash_prev = hash;
 					parsed[parsed_end+1] = bytes1(uint8(cp_count)); // number of codepoints
