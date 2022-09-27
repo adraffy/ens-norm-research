@@ -41,13 +41,14 @@ contract Ethmoji is Ownable {
 	}
 
 	// [pass]
-	// 💩💩💩.eth 
-	// 🇺🇸🇺🇸.eth 
+	// 💩💩💩.eth
+	// 🇺🇸🇺🇸.eth
 	// 🇺🇸🇦🇴.eth
 	// 👨‍👩‍👦.eth
 	// 🧟‍♂.eth
+	// 👨🏼‍❤‍💋‍👨🏽.eth
 	// [fail]
-	// 💩💩💩💩.eth 
+	// 💩💩💩💩.eth
 	// 🇦🇦🇦.eth
 	// 👨‍👩‍👦👨‍👩‍👦.eth
 
@@ -60,7 +61,7 @@ contract Ethmoji is Ownable {
 		}
 		require((suffix & 0xFFFFFFFF) == 0x2E657468, ".eth"); // require that it ends in .eth
 		bytes memory temp;
-	 	(temp, parsed) = beautify(bytes(name)); // throws if not normalized ethmoji		
+		(temp, parsed) = beautify(bytes(name)); // throws if not normalized ethmoji		
 		if (parsed.length == 4) { // single 	
 			uint256 n = uint8(parsed[0]);
 			uint256 num_cp = uint8(parsed[1]);
@@ -74,7 +75,7 @@ contract Ethmoji is Ownable {
 			// truncate to 1
 			n = uint8(parsed[3]);
 			assembly {
-				mstore(temp, n)
+				//mstore(temp, n)
 			}
 		} else if (parsed.length == 8) { // double
 			require(uint8(parsed[0]) == 1 && uint8(parsed[1]) == 2, "not double 0");
@@ -145,6 +146,7 @@ contract Ethmoji is Ownable {
 			uint256 saved;
 			uint256 buf; // the largest emoji is 35 bytes, which exceeds 32-byte buf
 			uint256 len; // but the largest non-valid emoji sequence is only 27-bytes
+			uint256 state0;
 			dst = dst0;
 			while (pos < end) {
 				(uint256 cp, uint256 step, uint256 raw) = readUTF8(pos);
@@ -161,17 +163,30 @@ contract Ethmoji is Ownable {
 				buf = (buf << (step << 3)) | raw; // use raw instead of converting cp back to UTF8
 				if ((state & EMOJI_STATE_FE0F) != 0) {
 					buf = (buf << 24) | 0xEFB88F; // UTF8-encoded FE0F
-					len += 3;
+					len += 3;		
 				}
 				if ((state & EMOJI_STATE_VALID) != 0) { // valid
-					if ((state & EMOJI_STATE_QUIRK) != 0) {
-						dst -= 3; // overwrite the last FE0F
-					}
+					state0 = state;
 					dst = appendBytes(dst, buf, len);
 					buf = 0;
 					len = 0;
 					valid_pos = pos; // everything output so far is valid
 				} 
+			}
+			if ((state0 & EMOJI_STATE_QUIRK) != 0) {
+				// the first FE0F is wrong
+				// have: A FE0F B C D 
+				// want: A B C D
+				// where FE0F is 3 bytes (see above)
+				(, uint256 quirk, ) = readUTF8(dst0); // length of first codepoint
+				quirk += dst0; // offset of first codepoint
+				while (quirk < dst) { // move left 3 bytes
+					assembly {
+						quirk := add(quirk, 32)
+						mstore(quirk, mload(add(quirk, 3))) 
+					}
+				}
+				dst -= 3;
 			}
 		}
 	}
