@@ -65,11 +65,11 @@ contract Ethmoji is Ownable {
 			uint256 n = uint8(parsed[0]);
 			uint256 num_cp = uint8(parsed[1]);
 			if (num_cp == 1) {
-				require(n == 2, "not 3 single");
+				require(n == 3, "not 3 single");
 			} else if (num_cp == 2) {
-				require(n == 1, "not 2 double");
+				require(n == 2, "not 2 double");
 			} else {
-				require(n == 0, "not 1 complex");
+				require(n == 1, "not 1 complex");
 			}
 			// truncate to 1
 			n = uint8(parsed[3]);
@@ -77,8 +77,8 @@ contract Ethmoji is Ownable {
 				mstore(temp, n)
 			}
 		} else if (parsed.length == 8) { // double
-			require(uint8(parsed[0]) == 0 && uint8(parsed[1]) == 2, "not double 0");
-			require(uint8(parsed[4]) == 0 && uint8(parsed[5]) == 2, "not double 1");
+			require(uint8(parsed[0]) == 1 && uint8(parsed[1]) == 2, "not double 0");
+			require(uint8(parsed[4]) == 1 && uint8(parsed[5]) == 2, "not double 1");
 			// temp is [flag][flag]
 		}
 		display = string(temp);
@@ -120,8 +120,8 @@ contract Ethmoji is Ownable {
 				} else {
 					if (repeated != 0) {
 						parsed[parsed_end-4] = bytes1(uint8(repeated));
-						repeated = 0;						
 					}
+					repeated = 1;
 					hash_prev = hash;
 					parsed[parsed_end+1] = bytes1(uint8(cp_count)); // number of codepoints
 					parsed[parsed_end+2] = bytes1(uint8(src_step)); // bytes read
