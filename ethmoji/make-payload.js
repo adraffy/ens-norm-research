@@ -2,7 +2,7 @@
 import {readFileSync, writeFileSync} from 'node:fs';
 
 // get list of codepoints from spec
-let EMOJI = JSON.parse(readFileSync(new URL('./spec-20220922+flags.json', import.meta.url))).emoji;
+let EMOJI = JSON.parse(readFileSync(new URL('./spec-20221004.json', import.meta.url))).emoji;
 
 class Node {
 	constructor() {
@@ -183,4 +183,4 @@ let cells = Object.entries(buckets).map(([key, bucket]) => {
 	return v; 
 });
 
-writeFileSync(new URL('./payload2.txt', import.meta.url), '0x' + Buffer.concat(cells).toString('hex'));
+writeFileSync(new URL('./payload-20221004.txt', import.meta.url), '0x' + Buffer.concat(cells).toString('hex'));
