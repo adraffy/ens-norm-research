@@ -1,7 +1,6 @@
 {
 	"type": "module",
 	"dependencies": {
-		"@adraffy/ensip-norm": "^0.0.8",
 		"@adraffy/punycode": "^0.0.2"
 	}
 }
